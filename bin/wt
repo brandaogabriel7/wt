@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# wt — git worktrees + per-project tmux sessions, one dedicated socket per project.
+# Pure tmux (no tmuxinator). POSIX-friendly bash; runs on macOS system bash 3.2.
+
+# Resolve this script's real location through any symlinks (e.g. ~/.local/bin/wt).
+src="${BASH_SOURCE[0]}"
+while [ -h "$src" ]; do
+  dir="$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)"
+  src="$(readlink "$src")"
+  case "$src" in /*) ;; *) src="$dir/$src" ;; esac
+done
+WT_ROOT="$(cd -P "$(dirname "$src")/.." >/dev/null 2>&1 && pwd)"
+
+WT_CONFIG_DIR="${WT_CONFIG_DIR:-$HOME/.config/wt}"
+
+. "$WT_ROOT/lib/common.sh"
+. "$WT_ROOT/lib/tmux.sh"
+. "$WT_ROOT/lib/commands.sh"
+
+[ -f "$WT_CONFIG_DIR/config.sh" ] && . "$WT_CONFIG_DIR/config.sh"
+
+# --project <name> may appear anywhere; pull it out before dispatch.
+WT_PROJECT_OVERRIDE=""
+args=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --project)   [ $# -ge 2 ] || wt_die "--project requires a name"; WT_PROJECT_OVERRIDE="$2"; shift 2 ;;
+    --project=*) WT_PROJECT_OVERRIDE="${1#*=}"; shift ;;
+    *)           args+=("$1"); shift ;;
+  esac
+done
+set -- "${args[@]}"
+
+cmd="${1:-}"
+[ $# -gt 0 ] && shift
+
+case "$cmd" in
+  new)            cmd_new "$@" ;;
+  stop)           cmd_stop "$@" ;;
+  rm)             cmd_rm "$@" ;;
+  ls)             cmd_ls "$@" ;;
+  attach)         cmd_attach "$@" ;;
+  kill)           cmd_kill "$@" ;;
+  doctor)         cmd_doctor "$@" ;;
+  projects)       cmd_projects "$@" ;;
+  help|-h|--help) cmd_help ;;
+  "")             cmd_help >&2; exit 1 ;;
+  *)              printf 'wt: unknown command: %s\n\n' "$cmd" >&2; cmd_help >&2; exit 1 ;;
+esac
