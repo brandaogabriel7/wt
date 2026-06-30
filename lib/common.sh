@@ -65,7 +65,8 @@ wt_resolve_project() {
 }
 
 wt_run_post_create() {
-  declare -f wt_post_create >/dev/null 2>&1 && wt_post_create
+  declare -f wt_post_create >/dev/null 2>&1 || return 0
+  wt_post_create
 }
 
 # Resolve the base ref for a BRAND-NEW branch (case c only).

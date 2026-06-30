@@ -35,6 +35,7 @@ cmd="${1:-}"
 [ $# -gt 0 ] && shift
 
 case "$cmd" in
+  init)           cmd_init "$@" ;;
   new)            cmd_new "$@" ;;
   stop)           cmd_stop "$@" ;;
   rm)             cmd_rm "$@" ;;

@@ -1,4 +1,48 @@
-# command implementations. Each resolves a project (except projects/help).
+# command implementations. Each resolves a project (except init/projects/help).
+
+cmd_init() {
+  local name="${1:-}" root="" common repo conf dest
+  common="$(wt_common_dir)"
+  [ -n "$common" ] && root="$(cd -P "$(dirname "$common")" 2>/dev/null && pwd)"
+  if [ -z "$name" ]; then
+    [ -n "$root" ] || wt_die "usage: wt init <name>   (or run inside a git repo to auto-name)"
+    name="$(basename "$root")"
+  fi
+  dest="$WT_CONFIG_DIR/projects/$name.sh"
+  [ -e "$dest" ] && wt_die "project '$name' already exists: $dest (not overwriting)"
+  if [ -n "$root" ]; then
+    case "$root" in
+      "$HOME"/*) repo="\$HOME/${root#"$HOME"/}" ;;
+      *)         repo="$root" ;;
+    esac
+  else
+    repo="\$HOME/path/to/$name"
+  fi
+  mkdir -p "$WT_CONFIG_DIR/projects" "$WT_CONFIG_DIR/tmux"
+  {
+    printf 'WT_REPO="%s"\n' "$repo"
+    printf 'WT_SOCKET="%s"\n' "$name"
+    printf 'WT_DEFAULT_BRANCH="main"\n'
+    printf 'WT_TMUX_CONF="$HOME/.config/wt/tmux/%s.conf"\n' "$name"
+    printf 'WT_WINDOWS=( "nvim:nvim" "shell:" "claude:claude" )\n'
+    printf '# wt_post_create() { cp "$WT_REPO/.env" "$PWD/.env"; }\n'
+  } > "$dest"
+  wt_status "created project '$name' -> $dest"
+  conf="$WT_CONFIG_DIR/tmux/$name.conf"
+  if [ -e "$conf" ]; then
+    wt_status "kept existing tmux conf -> $conf"
+  else
+    {
+      printf 'source-file -q ~/.tmux.conf\n'
+      printf "set -g status-style 'bg=colour22,fg=white'\n"
+      printf "set -g status-left ' %s | '\n" "$name"
+      printf 'set -g status-left-length 16\n'
+    } > "$conf"
+    wt_status "created tmux conf -> $conf"
+  fi
+  [ -n "$root" ] || wt_status "set WT_REPO in $dest (could not auto-detect a repo here)"
+  wt_status "then: wt new <branch> --project $name"
+}
 
 cmd_new() {
   local no_attach=0 branch base rbase name dir pos
@@ -183,6 +227,7 @@ wt — git worktrees + per-project tmux sessions
 usage: wt <command> [args] [--project <name>]
 
 commands:
+  init [name]                        scaffold a project config (auto-fills repo if inside one)
   new <branch> [base] [--no-attach]  create-or-resume worktree + tmux session
   stop <branch>                      kill the tmux session (worktree + branch kept)
   rm <branch> [--force]              kill session and remove the worktree dir (branch kept)
