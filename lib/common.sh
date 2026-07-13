@@ -87,3 +87,20 @@ wt_resolve_base() {
     printf '%s' "origin/$WT_DEFAULT_BRANCH"   # fresh remote trunk; local is often stale
   fi
 }
+
+# Refresh the trunk before branching off it, so new worktrees start from the
+# latest. Always fetch; then fast-forward the LOCAL trunk only when it's the
+# checked-out branch of the main worktree and can move cleanly. Never destructive:
+# a diverged or dirty trunk is left untouched (new branches still base off the
+# freshly-fetched origin/<trunk>, so they're current either way).
+wt_update_trunk() {
+  git -C "$WT_REPO" fetch origin --quiet || { wt_status "warning: fetch failed (continuing offline)"; return; }
+  local cur
+  cur="$(git -C "$WT_REPO" rev-parse --abbrev-ref HEAD 2>/dev/null)"
+  [ "$cur" = "$WT_DEFAULT_BRANCH" ] || return 0   # trunk not checked out here; nothing to pull
+  if git -C "$WT_REPO" merge --ff-only --quiet "origin/$WT_DEFAULT_BRANCH" 2>/dev/null; then
+    wt_status "synced $WT_DEFAULT_BRANCH with origin/$WT_DEFAULT_BRANCH in $WT_REPO"
+  else
+    wt_status "note: could not fast-forward $WT_DEFAULT_BRANCH (diverged or dirty); leaving it as-is"
+  fi
+}

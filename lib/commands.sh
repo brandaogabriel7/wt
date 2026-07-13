@@ -62,32 +62,41 @@ cmd_new() {
   wt_resolve_project
   wt_require_repo
 
+  # Invariant: the socket always keeps a home-base session on the trunk, living in
+  # the main worktree ($WT_REPO). Ensure it before creating any other session.
+  wt_ensure_main_session
+
   name="$(wt_sanitize "$branch")"
-  dir="$WT_REPO-$name"
 
-  if [ ! -d "$dir" ]; then
-    git -C "$WT_REPO" fetch origin --quiet || wt_status "warning: fetch failed (continuing offline)"
-    if git -C "$WT_REPO" show-ref --verify --quiet "refs/heads/$branch"; then
-      git -C "$WT_REPO" worktree add "$dir" "$branch" || wt_die "git worktree add failed"
-      wt_status "created worktree from local branch '$branch' -> $dir"
-    elif git -C "$WT_REPO" show-ref --verify --quiet "refs/remotes/origin/$branch"; then
-      git -C "$WT_REPO" worktree add --track -b "$branch" "$dir" "origin/$branch" || wt_die "git worktree add failed"
-      wt_status "created worktree tracking origin/$branch -> $dir"
+  # The trunk has no sibling worktree (git won't check it out twice) — it *is* the
+  # main session ensured above, so skip worktree/session setup and just attach.
+  if [ "$branch" != "$WT_DEFAULT_BRANCH" ]; then
+    dir="$WT_REPO-$name"
+
+    if [ ! -d "$dir" ]; then
+      wt_update_trunk
+      if git -C "$WT_REPO" show-ref --verify --quiet "refs/heads/$branch"; then
+        git -C "$WT_REPO" worktree add "$dir" "$branch" || wt_die "git worktree add failed"
+        wt_status "created worktree from local branch '$branch' -> $dir"
+      elif git -C "$WT_REPO" show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+        git -C "$WT_REPO" worktree add --track -b "$branch" "$dir" "origin/$branch" || wt_die "git worktree add failed"
+        wt_status "created worktree tracking origin/$branch -> $dir"
+      else
+        rbase="$(wt_resolve_base "$base")"
+        git -C "$WT_REPO" worktree add -b "$branch" "$dir" "$rbase" || wt_die "git worktree add failed"
+        wt_status "created worktree for new branch '$branch' off $rbase -> $dir"
+      fi
+      ( cd "$dir" && wt_run_post_create ) || wt_status "warning: post-create hook failed"
     else
-      rbase="$(wt_resolve_base "$base")"
-      git -C "$WT_REPO" worktree add -b "$branch" "$dir" "$rbase" || wt_die "git worktree add failed"
-      wt_status "created worktree for new branch '$branch' off $rbase -> $dir"
+      wt_status "worktree exists -> $dir"
     fi
-    ( cd "$dir" && wt_run_post_create ) || wt_status "warning: post-create hook failed"
-  else
-    wt_status "worktree exists -> $dir"
-  fi
 
-  if wt_session_exists "$name"; then
-    wt_status "session '$name' already running on socket '$WT_SOCKET'"
-  else
-    wt_create_session "$name" "$dir"
-    wt_status "started session '$name' on socket '$WT_SOCKET'"
+    if wt_session_exists "$name"; then
+      wt_status "session '$name' already running on socket '$WT_SOCKET'"
+    else
+      wt_create_session "$name" "$dir"
+      wt_status "started session '$name' on socket '$WT_SOCKET'"
+    fi
   fi
 
   if [ "$no_attach" = 1 ]; then
@@ -125,6 +134,7 @@ cmd_rm() {
   [ -n "$branch" ] || wt_die "usage: wt rm <branch> [--force]"
   wt_resolve_project
   wt_require_repo
+  [ "$branch" = "$WT_DEFAULT_BRANCH" ] && wt_die "refusing to remove the main worktree (trunk '$branch' lives in $WT_REPO); use 'wt stop $branch' to kill just its session"
   name="$(wt_sanitize "$branch")"
   dir="$WT_REPO-$name"
   if command -v tmux >/dev/null 2>&1 && tmux -L "$WT_SOCKET" kill-session -t "=$name" 2>/dev/null; then
@@ -161,6 +171,14 @@ cmd_attach() {
   local branch="${1:-}"
   if [ -n "$branch" ]; then
     wt_attach_session "$(wt_sanitize "$branch")"
+    return
+  fi
+  # No branch: plain socket attach, keeping tmux's native behavior. Only when the
+  # socket has no session yet do we bootstrap the trunk's main session to land on.
+  if ! tmux -L "$WT_SOCKET" list-sessions >/dev/null 2>&1; then
+    wt_require_repo
+    wt_ensure_main_session
+    wt_attach_session "$(wt_main_session_name)"
   elif [ -n "${TMUX:-}" ]; then
     wt_die "already inside tmux; run 'wt attach <branch>' to switch to a specific session"
   else
@@ -232,11 +250,15 @@ commands:
   stop <branch>                      kill the tmux session (worktree + branch kept)
   rm <branch> [--force]              kill session and remove the worktree dir (branch kept)
   ls                                 list worktrees, marking ones with a live session (●)
-  attach [branch]                    attach to the socket (or a specific session)
+  attach [branch]                    attach to the socket (or a session); bootstraps main if empty
   kill                               kill the whole project's tmux server
   doctor                             prune worktrees, find/offer to clean orphan dirs
   projects                           list registered projects
   help                               show this help
+
+the socket always keeps a main session on the trunk (WT_DEFAULT_BRANCH) in WT_REPO:
+'wt new' ensures it, 'wt new <trunk>' opens it (no worktree), and a bare 'wt attach'
+onto an empty socket bootstraps it.
 
 project resolution: --project <name>, or $WT_PROJECT, else auto-detected from $PWD's repo.
 config: ~/.config/wt/projects/<name>.sh   (see examples/ in the wt repo)

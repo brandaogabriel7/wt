@@ -45,3 +45,18 @@ wt_attach_session() {
     tmux -L "$WT_SOCKET" attach -t "=$name"
   fi
 }
+
+# The trunk's session name. Its home is the main worktree ($WT_REPO): git won't
+# check the default branch out in a sibling worktree, so it has no "-<branch>" dir.
+wt_main_session_name() { wt_sanitize "$WT_DEFAULT_BRANCH"; }
+
+# Guarantee the socket has a home-base session on the trunk, in the main worktree.
+# Idempotent: a no-op if it's already running. Called by every command that brings
+# the server up, so a project's socket always has a session on its default branch.
+wt_ensure_main_session() {
+  local name
+  name="$(wt_main_session_name)"
+  wt_session_exists "$name" && return 0
+  wt_create_session "$name" "$WT_REPO"
+  wt_status "started main session '$name' on socket '$WT_SOCKET' ($WT_REPO)"
+}

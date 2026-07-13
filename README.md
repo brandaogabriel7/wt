@@ -73,7 +73,7 @@ If none match you get a clear error.
 | `wt stop <branch>` | kill just the tmux session (worktree + branch stay) |
 | `wt rm <branch> [--force]` | kill session and remove the worktree dir (branch kept) |
 | `wt ls` | `git worktree list`, marking worktrees with a live session (`●`) |
-| `wt attach [branch]` | attach to the socket, or a specific session |
+| `wt attach [branch]` | attach to the socket, or a specific session (bootstraps main if empty) |
 | `wt kill` | kill the whole project's tmux server |
 | `wt doctor` | prune worktrees; find and offer to remove orphan dirs |
 | `wt projects` | list registered projects |
@@ -85,11 +85,33 @@ One sanitizer is used everywhere: **`/` becomes `-`**.
 - session name = sanitized branch
 - worktree dir = `<WT_REPO>-<sanitized branch>` (a sibling of the main repo)
 
+### The main session
+
+Each project's socket always keeps a **main session** on the trunk
+(`WT_DEFAULT_BRANCH`), running in the main worktree `WT_REPO` itself. The trunk has
+no sibling worktree — git won't check the same branch out twice — so `WT_REPO` *is*
+its home. Every `wt new` ensures this session exists, and a bare `wt attach` onto an
+empty socket bootstraps it — so within `wt`, bringing a socket up always establishes
+the trunk anchor, and attaching to a project lands you somewhere sensible.
+
+- `wt new <trunk>` opens this session (no worktree is created).
+- `wt attach` with no branch keeps tmux's native attach; if the socket has no session
+  yet, it creates the main session and attaches to it.
+- `wt stop <trunk>` kills it (it comes back on the next `wt new`).
+- `wt rm <trunk>` is refused — it's the main worktree.
+
 ### `wt new`
 
-If the worktree dir does not exist, it is materialized in this order:
+`wt new` first ensures the socket's [main session](#the-main-session) exists. If
+`<branch>` is the trunk itself, that session *is* the target, so it just attaches —
+no worktree is created.
 
-1. `git fetch origin --quiet`
+Otherwise, if the worktree dir does not exist, it is materialized in this order:
+
+1. **refresh the trunk** — `git fetch origin`, then fast-forward the local trunk to
+   `origin/<trunk>` when the trunk is checked out in `WT_REPO` and can move cleanly.
+   Never destructive: a diverged or dirty trunk is left as-is (brand-new branches
+   still base off the freshly-fetched `origin/<trunk>`, so they're current either way).
 2. **local branch** exists → `git worktree add "$dir" "$branch"`
 3. else **remote branch** `origin/<branch>` exists → `git worktree add --track -b ...`
 4. else **brand new** → `git worktree add -b "$branch" "$dir" "<base>"`
@@ -118,6 +140,8 @@ already inside tmux, and `attach` otherwise.
   repo, so the tool stays generic and your repos stay clean.
 - **Dedicated socket per project.** Each project's sessions are isolated on their own
   socket and can be configured (status bar, label) independently.
+- **Always a main session.** A socket that's up always has a home-base session on the
+  trunk, in `WT_REPO` — so a project is never a bag of feature sessions with no anchor.
 
 ## Layout
 
