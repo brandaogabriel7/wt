@@ -39,7 +39,8 @@ each project's repo.
 ```
 
 Create one with **`wt init`** (run from inside the repo — it auto-fills `WT_REPO` and a
-matching tmux conf), or write it by hand. A project file is sourced bash:
+matching tmux conf, then opens the file in your editor: `$VISUAL`/`$EDITOR`, else `vi`;
+pass `--no-edit` to skip), or write it by hand. A project file is sourced bash:
 
 ```sh
 WT_REPO="$HOME/code/myrepo"                  # main worktree / repo root (required)
@@ -68,7 +69,7 @@ If none match you get a clear error.
 
 | command | description |
 | --- | --- |
-| `wt init [name]` | scaffold a new project config (auto-fills `WT_REPO` when run inside a repo) |
+| `wt init [name] [--no-edit]` | scaffold a new project config (auto-fills `WT_REPO` inside a repo) and open it in `$EDITOR` |
 | `wt new <branch> [base] [--no-attach]` | create-or-resume a worktree + tmux session |
 | `wt stop <branch>` | kill just the tmux session (worktree + branch stay) |
 | `wt rm <branch> [--force]` | kill session and remove the worktree dir (branch kept) |

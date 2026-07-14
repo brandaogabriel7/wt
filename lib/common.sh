@@ -3,6 +3,23 @@
 wt_status() { printf '%s\n' "$*"; }
 wt_die() { printf 'wt: %s\n' "$*" >&2; exit 1; }
 
+# Open a file in the user's editor: $VISUAL, then $EDITOR, then vi. A no-op when
+# stdin isn't a terminal (scripts/CI) or the editor isn't found, so it never hangs
+# or fails a non-interactive run — it just points at the file instead.
+wt_edit_file() {
+  local file="$1" editor="${VISUAL:-${EDITOR:-vi}}" bin
+  if [ ! -t 0 ]; then
+    wt_status "not a terminal; edit it yourself: $file"
+    return 0
+  fi
+  bin="${editor%% *}"                     # first word ($EDITOR may carry args)
+  if ! command -v "$bin" >/dev/null 2>&1; then
+    wt_status "editor '$bin' not found; edit it yourself: $file"
+    return 0
+  fi
+  $editor "$file"                         # unquoted on purpose: allow "code --wait" etc.
+}
+
 # branch -> name: the ONE sanitizer used everywhere. "/" becomes "-".
 wt_sanitize() { printf '%s' "${1//\//-}"; }
 

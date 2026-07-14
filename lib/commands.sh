@@ -1,7 +1,18 @@
 # command implementations. Each resolves a project (except init/projects/help).
 
 cmd_init() {
-  local name="${1:-}" root="" common repo conf dest
+  local name="" edit=1 root="" common repo conf dest pos
+  pos=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --no-edit) edit=0; shift ;;
+      --edit)    edit=1; shift ;;
+      --)        shift; while [ $# -gt 0 ]; do pos+=("$1"); shift; done ;;
+      -*)        wt_die "wt init: unknown option: $1" ;;
+      *)         pos+=("$1"); shift ;;
+    esac
+  done
+  name="${pos[0]:-}"
   common="$(wt_common_dir)"
   [ -n "$common" ] && root="$(cd -P "$(dirname "$common")" 2>/dev/null && pwd)"
   if [ -z "$name" ]; then
@@ -41,6 +52,7 @@ cmd_init() {
     wt_status "created tmux conf -> $conf"
   fi
   [ -n "$root" ] || wt_status "set WT_REPO in $dest (could not auto-detect a repo here)"
+  [ "$edit" = 1 ] && wt_edit_file "$dest"
   wt_status "then: wt new <branch> --project $name"
 }
 
@@ -245,7 +257,7 @@ wt — git worktrees + per-project tmux sessions
 usage: wt <command> [args] [--project <name>]
 
 commands:
-  init [name]                        scaffold a project config (auto-fills repo if inside one)
+  init [name] [--no-edit]            scaffold a project config (auto-fills repo inside one), open in $EDITOR
   new <branch> [base] [--no-attach]  create-or-resume worktree + tmux session
   stop <branch>                      kill the tmux session (worktree + branch kept)
   rm <branch> [--force]              kill session and remove the worktree dir (branch kept)
