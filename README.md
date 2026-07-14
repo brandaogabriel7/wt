@@ -58,26 +58,31 @@ See [`examples/myrepo.sh`](examples/myrepo.sh) and
 
 Each command picks a project by, in order:
 
-1. `--project <name>` flag (may appear anywhere on the line),
+1. `-p <name>` / `--project <name>` flag (may appear anywhere on the line),
 2. `$WT_PROJECT`,
 3. auto-detection — matches `$PWD`'s repo (its `git --git-common-dir`) against each
    registered project's `WT_REPO`, so it works from the main repo or any of its worktrees.
 
-If none match you get a clear error.
+If none match you get a clear error. Because the flag works on every command, you can
+drive any project from anywhere — e.g. `wt attach -p myrepo` or `wt ls -p myrepo --all`.
 
 ## Commands
+
+Every command accepts `-p`/`--project <name>` and `-h`/`--help` (the latter prints
+detailed usage for that command, e.g. `wt new --help`).
 
 | command | description |
 | --- | --- |
 | `wt init [name] [--no-edit]` | scaffold a new project config (auto-fills `WT_REPO` inside a repo) and open it in `$EDITOR` |
 | `wt new <branch> [base] [--no-attach]` | create-or-resume a worktree + tmux session |
-| `wt stop <branch>` | kill just the tmux session (worktree + branch stay) |
-| `wt rm <branch> [--force]` | kill session and remove the worktree dir (branch kept) |
-| `wt ls` | `git worktree list`, marking worktrees with a live session (`●`) |
+| `wt stop [branch...]` | kill tmux session(s); with no branch, the current worktree's |
+| `wt rm [branch...] [--force]` | kill session(s) and remove worktree dir(s); with no branch, the current worktree's (branch kept) |
+| `wt ls [--all]` | `git worktree list`, marking live sessions (`●`); `--all` spans every project |
 | `wt attach [branch]` | attach to the socket, or a specific session (bootstraps main if empty) |
 | `wt kill` | kill the whole project's tmux server |
 | `wt doctor` | prune worktrees; find and offer to remove orphan dirs |
 | `wt projects` | list registered projects |
+| `wt help [command]` | general help, or detailed help for a command |
 
 ### Naming
 

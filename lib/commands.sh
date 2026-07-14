@@ -119,10 +119,25 @@ cmd_new() {
 }
 
 cmd_stop() {
-  local branch="${1:-}" name
-  [ -n "$branch" ] || wt_die "usage: wt stop <branch>"
+  local pos=() branch
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --) shift; while [ $# -gt 0 ]; do pos+=("$1"); shift; done ;;
+      -*) wt_die "wt stop: unknown option: $1" ;;
+      *)  pos+=("$1"); shift ;;
+    esac
+  done
   wt_require_tmux
   wt_resolve_project
+  if [ "${#pos[@]}" -eq 0 ]; then
+    branch="$(wt_current_branch)" || wt_die "usage: wt stop [branch...]   (or run inside a worktree to infer it)"
+    pos=("$branch")
+  fi
+  for branch in "${pos[@]}"; do wt_stop_one "$branch"; done
+}
+
+wt_stop_one() {
+  local branch="$1" name
   name="$(wt_sanitize "$branch")"
   if tmux -L "$WT_SOCKET" kill-session -t "=$name" 2>/dev/null; then
     wt_status "stopped session '$name' (worktree and branch kept)"
@@ -132,8 +147,7 @@ cmd_stop() {
 }
 
 cmd_rm() {
-  local force=0 branch name dir pos
-  pos=()
+  local force=0 branch pos=() rc=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --force|-f) force=1; shift ;;
@@ -142,28 +156,70 @@ cmd_rm() {
       *)          pos+=("$1"); shift ;;
     esac
   done
-  branch="${pos[0]:-}"
-  [ -n "$branch" ] || wt_die "usage: wt rm <branch> [--force]"
   wt_resolve_project
   wt_require_repo
-  [ "$branch" = "$WT_DEFAULT_BRANCH" ] && wt_die "refusing to remove the main worktree (trunk '$branch' lives in $WT_REPO); use 'wt stop $branch' to kill just its session"
+  if [ "${#pos[@]}" -eq 0 ]; then
+    branch="$(wt_current_branch)" || wt_die "usage: wt rm [branch...] [--force]   (or run inside a worktree to infer it)"
+    pos=("$branch")
+  fi
+  # Never abort a batch on one failure: report it, keep going, exit non-zero.
+  for branch in "${pos[@]}"; do wt_rm_one "$branch" "$force" || rc=1; done
+  return $rc
+}
+
+wt_rm_one() {
+  local branch="$1" force="$2" name dir
+  if [ "$branch" = "$WT_DEFAULT_BRANCH" ]; then
+    wt_status "skip '$branch': refusing to remove the main worktree (trunk lives in $WT_REPO); use 'wt stop $branch'"
+    return 1
+  fi
   name="$(wt_sanitize "$branch")"
   dir="$WT_REPO-$name"
   if command -v tmux >/dev/null 2>&1 && tmux -L "$WT_SOCKET" kill-session -t "=$name" 2>/dev/null; then
     wt_status "stopped session '$name'"
   fi
   if [ "$force" = 1 ]; then
-    git -C "$WT_REPO" worktree remove --force "$dir" || wt_die "git worktree remove failed: $dir"
+    git -C "$WT_REPO" worktree remove --force "$dir" || { wt_status "warning: git worktree remove failed: $dir"; return 1; }
   else
-    git -C "$WT_REPO" worktree remove "$dir" || wt_die "git worktree remove failed: $dir (uncommitted changes? retry: wt rm $branch --force)"
+    git -C "$WT_REPO" worktree remove "$dir" || { wt_status "warning: git worktree remove failed: $dir (uncommitted changes? retry: wt rm $branch --force)"; return 1; }
   fi
   wt_status "removed worktree -> $dir (branch '$branch' kept)"
 }
 
 cmd_ls() {
-  wt_resolve_project
-  wt_require_repo
-  local sessions=""
+  local all=0 f name any=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --all|-a) all=1; shift ;;
+      --)       shift; break ;;
+      -*)       wt_die "wt ls: unknown option: $1" ;;
+      *)        wt_die "wt ls: unexpected argument: $1" ;;
+    esac
+  done
+  if [ "$all" = 0 ]; then
+    wt_resolve_project
+    wt_require_repo
+    wt_ls_one
+    return
+  fi
+  # --all: one section per registered project. A broken/missing project is noted
+  # and skipped (in a subshell, so wt_load_project's die can't abort the sweep).
+  for f in "$WT_CONFIG_DIR"/projects/*.sh; do
+    [ -f "$f" ] || continue
+    any=1
+    name="$(basename "$f" .sh)"
+    ( if ! wt_load_project "$name" >/dev/null 2>&1; then
+        printf '── %s  (config error; skipped)\n' "$name"; exit 0
+      fi
+      printf '── %s  (%s)\n' "$name" "$WT_REPO"
+      [ -d "$WT_REPO" ] || { wt_status "   WT_REPO missing: $WT_REPO"; exit 0; }
+      wt_ls_one )
+  done
+  [ "$any" = 0 ] && wt_status "no projects registered. Add one: wt init"
+}
+
+wt_ls_one() {
+  local sessions="" line br name mark
   command -v tmux >/dev/null 2>&1 && sessions="$(tmux -L "$WT_SOCKET" list-sessions -F '#{session_name}' 2>/dev/null)"
   # Session name is the sanitized branch; recover it from each worktree's [branch].
   git -C "$WT_REPO" worktree list | while IFS= read -r line; do
@@ -178,9 +234,17 @@ cmd_ls() {
 }
 
 cmd_attach() {
+  local pos=() branch
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --) shift; while [ $# -gt 0 ]; do pos+=("$1"); shift; done ;;
+      -*) wt_die "wt attach: unknown option: $1" ;;
+      *)  pos+=("$1"); shift ;;
+    esac
+  done
   wt_require_tmux
   wt_resolve_project
-  local branch="${1:-}"
+  branch="${pos[0]:-}"
   if [ -n "$branch" ]; then
     wt_attach_session "$(wt_sanitize "$branch")"
     return
@@ -254,25 +318,148 @@ cmd_help() {
   cat <<'EOF'
 wt — git worktrees + per-project tmux sessions
 
-usage: wt <command> [args] [--project <name>]
+usage: wt <command> [args] [-p|--project <name>]
 
 commands:
   init [name] [--no-edit]            scaffold a project config (auto-fills repo inside one), open in $EDITOR
   new <branch> [base] [--no-attach]  create-or-resume worktree + tmux session
-  stop <branch>                      kill the tmux session (worktree + branch kept)
-  rm <branch> [--force]              kill session and remove the worktree dir (branch kept)
-  ls                                 list worktrees, marking ones with a live session (●)
+  stop [branch...]                   kill tmux session(s); no branch = current worktree
+  rm [branch...] [--force]           kill session(s) + remove worktree dir(s); no branch = current worktree
+  ls [--all]                         list worktrees + live sessions (●); --all spans every project
   attach [branch]                    attach to the socket (or a session); bootstraps main if empty
   kill                               kill the whole project's tmux server
   doctor                             prune worktrees, find/offer to clean orphan dirs
   projects                           list registered projects
-  help                               show this help
+  help [command]                     show this help, or detailed help for a command
+
+run 'wt <command> --help' for details and examples on any command.
 
 the socket always keeps a main session on the trunk (WT_DEFAULT_BRANCH) in WT_REPO:
 'wt new' ensures it, 'wt new <trunk>' opens it (no worktree), and a bare 'wt attach'
 onto an empty socket bootstraps it.
 
-project resolution: --project <name>, or $WT_PROJECT, else auto-detected from $PWD's repo.
+project resolution: -p/--project <name>, or $WT_PROJECT, else auto-detected from $PWD's repo.
 config: ~/.config/wt/projects/<name>.sh   (see examples/ in the wt repo)
 EOF
+}
+
+# Per-command help. `wt <cmd> --help` and `wt help <cmd>` route here; an unknown
+# or empty command falls back to the global overview.
+wt_usage() {
+  local resolves=1
+  case "$1" in
+    init)
+      resolves=0
+      cat <<'EOF'
+usage: wt init [name] [--no-edit]
+
+Scaffold a project config at ~/.config/wt/projects/<name>.sh plus a matching
+tmux conf, then open the config in $VISUAL/$EDITOR (else vi). Run inside a git
+repo to auto-fill WT_REPO and default the name to the repo's basename.
+
+  name        project name (default: basename of the repo you're in)
+  --no-edit   don't open the new config in your editor
+EOF
+      ;;
+    new)
+      cat <<'EOF'
+usage: wt new <branch> [base] [--no-attach]
+
+Create-or-resume a worktree for <branch> and its tmux session, then attach.
+Resolution: an existing local branch is checked out; else a matching
+origin/<branch> is tracked; else a new branch is created off [base]. If
+<branch> is the trunk it opens the main session in WT_REPO (no new worktree).
+
+  base          ref to branch from when creating a NEW branch
+                (default: the branch you're on, else origin/<trunk>)
+  --no-attach   set everything up but don't attach
+EOF
+      ;;
+    stop)
+      cat <<'EOF'
+usage: wt stop [branch...]
+
+Kill the tmux session for each branch; the worktree and branch are kept.
+With no branch, infers it from the worktree you're standing in.
+
+  branch...   one or more branches (omit to use the current worktree)
+EOF
+      ;;
+    rm)
+      cat <<'EOF'
+usage: wt rm [branch...] [--force]
+
+Kill the session and remove the worktree directory for each branch; the branch
+itself is kept. Refuses the trunk (use 'wt stop'). With no branch, infers it
+from the worktree you're standing in. A failure on one branch is reported but
+does not stop the rest.
+
+  branch...   one or more branches (omit to use the current worktree)
+  --force     remove even with uncommitted changes / untracked files
+EOF
+      ;;
+    ls)
+      cat <<'EOF'
+usage: wt ls [--all]
+
+List the project's worktrees, marking ones with a live tmux session (●).
+
+  --all   list every registered project's worktrees and sessions
+EOF
+      ;;
+    attach)
+      cat <<'EOF'
+usage: wt attach [branch]
+
+Attach to the project's tmux socket. With [branch], target that branch's
+session. A bare attach onto an empty socket bootstraps the trunk's main
+session. To reach a project from anywhere, add -p <name>:
+
+  wt attach -p myproject             # main session of another project
+  wt attach some-branch -p myproj    # a specific session there
+EOF
+      ;;
+    kill)
+      cat <<'EOF'
+usage: wt kill
+
+Kill the whole project's tmux server (every session on its socket). Worktrees
+and branches are left untouched.
+EOF
+      ;;
+    doctor)
+      cat <<'EOF'
+usage: wt doctor
+
+Prune stale worktree registrations (git worktree prune), then find directories
+matching <repo>-* that aren't registered worktrees and offer to remove them.
+EOF
+      ;;
+    projects)
+      resolves=0
+      cat <<'EOF'
+usage: wt projects
+
+List registered projects with their WT_REPO and socket.
+EOF
+      ;;
+    help)
+      resolves=0
+      cat <<'EOF'
+usage: wt help [command]
+
+Show the general overview, or detailed help for a specific command
+(equivalent to 'wt <command> --help').
+EOF
+      ;;
+    *)
+      cmd_help
+      return
+      ;;
+  esac
+  [ "$resolves" = 1 ] && cat <<'EOF'
+
+project: resolved from -p/--project <name>, then $WT_PROJECT, then $PWD's repo.
+EOF
+  return 0
 }

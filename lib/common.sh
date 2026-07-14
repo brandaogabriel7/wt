@@ -76,9 +76,22 @@ wt_resolve_project() {
   local name="$WT_PROJECT_OVERRIDE"
   [ -n "$name" ] || name="${WT_PROJECT:-}"
   if [ -z "$name" ]; then
-    name="$(wt_detect_project)" || wt_die "could not detect a project from $PWD; pass --project <name> or set WT_PROJECT (see: wt projects)"
+    name="$(wt_detect_project)" || wt_die "could not detect a project from $PWD; pass -p <name> or set WT_PROJECT (see: wt projects)"
   fi
   wt_load_project "$name"
+}
+
+# Branch checked out in $PWD, but ONLY when $PWD belongs to the resolved project's
+# repo (same git common dir). Empty + return 1 otherwise, so 'stop'/'rm' can infer
+# their target from the worktree you're standing in without ever guessing wrong.
+wt_current_branch() {
+  local here cur
+  here="$(wt_common_dir)"
+  [ -n "$here" ] || return 1
+  [ "$here" = "$(wt_common_dir "$WT_REPO")" ] || return 1
+  cur="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+  [ -n "$cur" ] && [ "$cur" != "HEAD" ] || return 1   # unborn/detached: can't infer
+  printf '%s' "$cur"
 }
 
 wt_run_post_create() {
